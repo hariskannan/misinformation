@@ -70,10 +70,14 @@ class RegisterSerializer(serializers.Serializer):
             password=validated_data['password'],
             first_name=validated_data.get('full_name', '').split(' ')[0][:30],
         )
-        UserProfile.objects.create(
+        # The post_save signal on User already creates a blank profile row, so
+        # fill that row instead of inserting a second one (unique user_id).
+        UserProfile.objects.update_or_create(
             user=user,
-            full_name=validated_data['full_name'],
-            department=validated_data.get('department', ''),
+            defaults={
+                'full_name': validated_data['full_name'],
+                'department': validated_data.get('department', ''),
+            },
         )
         return user
 
