@@ -45,6 +45,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Serves collected static files (Django admin, API docs) in production.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -117,9 +119,14 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Built React app. The Docker image copies frontend/dist here so one Django
+# process can serve both the API and the user interface.
+FRONTEND_DIST = Path(os.getenv('FRONTEND_DIST', str(BASE_DIR / 'frontend_dist')))
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -175,6 +182,27 @@ CORS_ALLOWED_ORIGINS = [
     ).split(',') if o.strip()
 ]
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS[:]
+
+# -----------------------------------------------------------------------
+# Public hosting (Render sets RENDER_EXTERNAL_HOSTNAME automatically)
+# -----------------------------------------------------------------------
+RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME', '').strip()
+if RENDER_EXTERNAL_HOSTNAME:
+    if RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+    _trusted_origin = f'https://{RENDER_EXTERNAL_HOSTNAME}'
+    if _trusted_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_trusted_origin)
+
+# Hosts that require an explicit scheme are a common deployment pitfall.
+EXTRA_ALLOWED_HOSTS = os.getenv('DJANGO_EXTRA_ALLOWED_HOSTS', '')
+for _host in EXTRA_ALLOWED_HOSTS.split(','):
+    _host = _host.strip()
+    if _host and _host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_host)
+
+if os.getenv('DJANGO_BEHIND_PROXY', '1').lower() in ('1', 'true', 'yes'):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # -----------------------------------------------------------------------
 # Uploads / security

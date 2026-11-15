@@ -1,4 +1,5 @@
 from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -34,6 +35,15 @@ class ModerationStatsView(APIView):
             'open_reports': UserReport.objects.filter(
                 status__in=[UserReport.Status.OPEN, UserReport.Status.IN_REVIEW]).count(),
             'total_reviews': ModerationReview.objects.count(),
+            # Count every human decision that changed a post's risk level,
+            # whether it happened during approval or through a later set-risk.
+            'risk_overrides': (
+                ModerationReview.objects
+                .exclude(new_risk_level='')
+                .exclude(previous_risk_level='')
+                .exclude(new_risk_level=F('previous_risk_level'))
+                .count()
+            ),
         })
 
 
@@ -58,7 +68,9 @@ class ModerationQueueView(APIView):
 
         paginator = DefaultPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = ModerationQueueItemSerializer(page, many=True)
+        serializer = ModerationQueueItemSerializer(
+            page, many=True, context={'request': request}
+        )
         return paginator.get_paginated_response(serializer.data)
 
 
@@ -83,17 +95,46 @@ class _ModerationActionBase(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # An approval may optionally lower (or raise) the post's risk level.
+        # The original machine-learning Prediction is never modified.
+        previous_risk = post.risk_level
+        new_risk = ''
+        if self.action == ModerationReview.Action.APPROVED:
+            new_risk = (request.data.get('new_risk_level') or '').strip().lower()
+            if new_risk and new_risk not in Post.RiskLevel.values:
+                return Response(
+                    {'detail': 'Invalid risk level. Use low, medium or high.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if new_risk == previous_risk:
+                new_risk = ''
+
+        risk_changed = bool(new_risk)
         review = ModerationReview.objects.create(
-            post=post, moderator=request.user, action=self.action, remarks=remarks
+            post=post,
+            moderator=request.user,
+            action=self.action,
+            remarks=remarks,
+            previous_risk_level=previous_risk if risk_changed else '',
+            new_risk_level=new_risk,
         )
 
         if self.action == ModerationReview.Action.APPROVED:
             post.status = Post.Status.APPROVED
+            if risk_changed:
+                post.risk_level = new_risk
             verb = 'Your post was approved'
             message = (
                 'A moderator reviewed your flagged post and approved it. It is now '
                 'publicly visible. ' + (f'Remarks: {remarks}' if remarks else '')
             )
+            if risk_changed:
+                message += (
+                    f' The moderator also changed the risk level from '
+                    f'{self._risk_label(previous_risk)} to '
+                    f'{self._risk_label(new_risk)}; the original model prediction '
+                    'remains on record.'
+                )
             audit_action = 'post_approved'
         else:
             post.status = Post.Status.REJECTED
@@ -103,7 +144,10 @@ class _ModerationActionBase(APIView):
                 'hidden from the feed. ' + (f'Remarks: {remarks}' if remarks else '')
             )
             audit_action = 'post_rejected'
-        post.save(update_fields=['status'])
+        update_fields = ['status', 'updated_at']
+        if risk_changed:
+            update_fields.append('risk_level')
+        post.save(update_fields=update_fields)
 
         notify(
             post.author, verb, message,
@@ -126,12 +170,18 @@ class _ModerationActionBase(APIView):
 
         log_audit(request, audit_action, 'post', post.id,
                   {'moderator': request.user.username,
-                   'remarks': remarks[:500]})
+                   'remarks': remarks[:500],
+                   'previous_risk_level': previous_risk,
+                   'new_risk_level': new_risk or previous_risk})
 
         return Response({
             'detail': f'Post {"approved" if self.action == "approved" else "rejected"}.',
             'review': ModerationReviewSerializer(review).data,
         })
+
+    @staticmethod
+    def _risk_label(value):
+        return dict(Post.RiskLevel.choices).get(value, value or 'unassessed')
 
 
 class ApprovePostView(_ModerationActionBase):
@@ -144,6 +194,137 @@ class RejectPostView(_ModerationActionBase):
     """POST /api/moderation/{id}/reject/"""
 
     action = ModerationReview.Action.REJECTED
+
+
+class SetPostRiskView(APIView):
+    """POST /api/moderation/{id}/set-risk/ - override a post's risk level.
+
+    This is a human moderation decision recorded separately from the model
+    prediction. The linked Prediction row is never modified.
+    """
+
+    permission_classes = [IsModeratorOrAdmin]
+
+    def post(self, request, pk):
+        post = get_object_or_404(Post, pk=pk)
+        if post.status == Post.Status.PENDING_REVIEW:
+            return Response(
+                {'detail': 'This post is still in the review queue. Use approve or '
+                           'reject (approval accepts an optional new risk level).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        risk_level = (request.data.get('risk_level') or '').strip().lower()
+        if risk_level not in Post.RiskLevel.values:
+            return Response(
+                {'detail': 'Invalid risk level. Use low, medium or high.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        remarks = (request.data.get('remarks') or '').strip()
+        if len(remarks) < 10:
+            return Response(
+                {'detail': 'Please write at least 10 characters explaining the risk '
+                           'change so the decision is auditable.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        previous_risk = post.risk_level
+        if previous_risk == risk_level:
+            return Response(
+                {'detail': f'This post already has {risk_level} risk.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        post.risk_level = risk_level
+        post.save(update_fields=['risk_level', 'updated_at'])
+
+        review = ModerationReview.objects.create(
+            post=post,
+            moderator=request.user,
+            action=ModerationReview.Action.RISK_OVERRIDDEN,
+            remarks=remarks,
+            previous_risk_level=previous_risk,
+            new_risk_level=risk_level,
+        )
+
+        labels = dict(Post.RiskLevel.choices)
+        share_note = (
+            'The post is now eligible for social sharing.'
+            if risk_level in (Post.RiskLevel.LOW, Post.RiskLevel.MEDIUM)
+            else 'High-risk posts cannot be shared to social media.'
+        )
+        notify(
+            post.author,
+            'Risk level updated by a moderator',
+            (
+                f'A moderator changed the risk level of your post from '
+                f'{labels.get(previous_risk, previous_risk or "unassessed")} to '
+                f'{labels[risk_level]}. {share_note} The original model prediction '
+                f'is unchanged and remains on record. Remarks: {remarks}'
+            ),
+            notification_type=Notification.Type.MODERATION,
+            post=post,
+        )
+
+        log_audit(request, 'post_risk_overridden', 'post', post.id, {
+            'moderator': request.user.username,
+            'previous_risk_level': previous_risk,
+            'new_risk_level': risk_level,
+            'remarks': remarks[:500],
+        })
+
+        return Response({
+            'detail': (
+                f'Risk level changed from {previous_risk or "unassessed"} to '
+                f'{risk_level}.'
+            ),
+            'review': ModerationReviewSerializer(review).data,
+            'post': ModerationQueueItemSerializer(
+                post, context={'request': request}
+            ).data,
+        })
+
+
+class ModeratedPostsView(APIView):
+    """GET /api/moderation/posts/ - posts that are no longer in the queue.
+
+    Moderators use this list to review and adjust risk levels after a post has
+    been published, approved or rejected.
+    """
+
+    permission_classes = [IsModeratorOrAdmin]
+
+    def get(self, request):
+        queryset = (
+            Post.objects.filter(status__in=[
+                Post.Status.PUBLISHED, Post.Status.APPROVED, Post.Status.REJECTED,
+            ])
+            .select_related('author', 'author__profile', 'prediction',
+                            'prediction__model_version')
+            .prefetch_related('reports', 'reviews__moderator')
+        )
+        post_status = request.query_params.get('status')
+        if post_status in (Post.Status.PUBLISHED, Post.Status.APPROVED,
+                           Post.Status.REJECTED):
+            queryset = queryset.filter(status=post_status)
+        risk = request.query_params.get('risk')
+        if risk in Post.RiskLevel.values:
+            queryset = queryset.filter(risk_level=risk)
+        category = request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+        search = request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search) | Q(content__icontains=search)
+            )
+
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = ModerationQueueItemSerializer(
+            page, many=True, context={'request': request}
+        )
+        return paginator.get_paginated_response(serializer.data)
 
 
 class ModerationReportsView(APIView):

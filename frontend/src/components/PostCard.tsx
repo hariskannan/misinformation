@@ -16,6 +16,7 @@ import {
 import CommentSection from './CommentSection';
 import ConfirmationModal from './ConfirmationModal';
 import RiskBadge from './RiskBadge';
+import ShareMenu from './ShareMenu';
 
 function ReportModal({
   post,
@@ -268,6 +269,7 @@ export default function PostCard({
           <MessageCircle className="h-[18px] w-[18px]" />
           <span className="text-sm">{commentCount}</span>
         </button>
+        <ShareMenu post={post} />
         {!isAuthor && !reported && (
           <button
             type="button"

@@ -231,6 +231,17 @@ export interface ModerationStats {
   user_reports: number;
   open_reports: number;
   total_reviews: number;
+  risk_overrides: number;
+}
+
+export interface ModerationReviewSummary {
+  id: number;
+  action: 'approved' | 'rejected' | 'risk_overridden';
+  remarks: string;
+  moderator_username: string;
+  previous_risk_level: '' | RiskLevel;
+  new_risk_level: '' | RiskLevel;
+  created_at: string;
 }
 
 export interface ModerationQueueItem {
@@ -238,9 +249,11 @@ export interface ModerationQueueItem {
   title: string;
   content: string;
   category: string;
+  image: string | null;
   status: PostStatus;
   risk_level: RiskLevel;
   created_at: string;
+  updated_at: string;
   author_username: string;
   author_full_name: string;
   prediction: {
@@ -254,6 +267,7 @@ export interface ModerationQueueItem {
   } | null;
   reports_count: number;
   latest_report_reasons: string[];
+  latest_review: ModerationReviewSummary | null;
 }
 
 export interface ModerationReviewItem {
@@ -265,8 +279,10 @@ export interface ModerationReviewItem {
   post_risk_level: '' | RiskLevel;
   post_author: string;
   moderator_username: string;
-  action: 'approved' | 'rejected';
+  action: 'approved' | 'rejected' | 'risk_overridden';
   remarks: string;
+  previous_risk_level: '' | RiskLevel;
+  new_risk_level: '' | RiskLevel;
   created_at: string;
 }
 

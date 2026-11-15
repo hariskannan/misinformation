@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -114,7 +115,16 @@ class MyPostsView(APIView):
 class PostDetailView(APIView):
     """GET /api/posts/{id}/ - full post detail with comments.
     DELETE /api/posts/{id}/ - author or admin only.
+
+    Reading a public post is anonymous so shared links (/post/{id}) work for
+    signed-out visitors. Non-public posts still require the author, a moderator
+    or an administrator.
     """
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [AllowAny()]
+        return [IsAuthenticated(), IsOwnerOrModeratorOrAdmin()]
 
     def get(self, request, pk):
         try:

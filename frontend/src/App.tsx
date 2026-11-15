@@ -4,6 +4,7 @@ import Landing from './pages/Landing';
 import About from './pages/About';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import PostPage from './pages/PostPage';
 import NotFound from './pages/NotFound';
 import Home from './pages/dashboard/Home';
 import CreatePostPage from './pages/dashboard/CreatePostPage';
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/about" element={<About />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/post/:id" element={<PostPage />} />
 
       {/* Authenticated user dashboard */}
       <Route

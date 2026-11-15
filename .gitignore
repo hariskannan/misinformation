@@ -39,6 +39,12 @@ yarn-error.log*
 Thumbs.db
 desktop.ini
 
+# Hosted frontend build (copied in by the Dockerfile)
+backend/frontend_dist/
+
+# Local tunnel client downloaded by start-public-tunnel.bat
+tools/
+
 # ---------- Logs / temp ----------
 *.log
 tmp/

@@ -12,3 +12,7 @@ joblib==1.4.2
 openpyxl==3.1.5
 Pillow==10.4.0
 python-dotenv==1.0.1
+
+# Production serving (used by the Docker image / hosted deployment)
+whitenoise==6.7.0
+gunicorn==23.0.0

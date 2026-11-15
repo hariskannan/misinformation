@@ -1,6 +1,7 @@
 import {
   Clock,
   FileWarning,
+  Gauge,
   Inbox,
   ListChecks,
   ShieldAlert,
@@ -14,6 +15,7 @@ import { moderationApi } from '../api/moderation';
 import DashboardStatCard from '../components/DashboardStatCard';
 import ErrorMessage from '../components/ErrorMessage';
 import LoadingSpinner from '../components/LoadingSpinner';
+import ModeratedPostsTable from '../components/ModeratedPostsTable';
 import ModerationTable from '../components/ModerationTable';
 import PageWrapper from '../components/PageWrapper';
 import RiskBadge from '../components/RiskBadge';
@@ -31,7 +33,7 @@ import {
   REPORT_REASON_LABELS,
 } from '../utils/format';
 
-type Tab = 'queue' | 'reports' | 'history';
+type Tab = 'queue' | 'moderated' | 'reports' | 'history';
 
 export default function ModeratorPage() {
   const [tab, setTab] = useState<Tab>('queue');
@@ -42,6 +44,11 @@ export default function ModeratorPage() {
   const [queueLoading, setQueueLoading] = useState(true);
   const [queueError, setQueueError] = useState<unknown>(null);
   const [queueRisk, setQueueRisk] = useState('');
+
+  const [moderated, setModerated] = useState<ModerationQueueItem[]>([]);
+  const [moderatedLoading, setModeratedLoading] = useState(true);
+  const [moderatedError, setModeratedError] = useState<unknown>(null);
+  const [moderatedRisk, setModeratedRisk] = useState('');
 
   const [reports, setReports] = useState<UserReport[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
@@ -77,8 +84,22 @@ export default function ModeratorPage() {
     }
   }, [queueRisk]);
 
-  const loadReports = useCallback(async () => {
-    setReportsLoading(true);
+  const loadModerated = useCallback(async () => {
+    setModeratedLoading(true);
+    setModeratedError(null);
+    try {
+      const data = await moderationApi.moderatedPosts({
+        risk: moderatedRisk || undefined,
+      });
+      setModerated(data.results);
+    } catch (err) {
+      setModeratedError(err);
+    } finally {
+      setModeratedLoading(false);
+    }
+  }, [moderatedRisk]);
+
+  const loadReports = useCallback(async () => {    setReportsLoading(true);
     setReportsError(null);
     try {
       const data = await moderationApi.reports({ status: reportsStatus });
@@ -109,13 +130,15 @@ export default function ModeratorPage() {
 
   useEffect(() => {
     if (tab === 'queue') void loadQueue();
+    if (tab === 'moderated') void loadModerated();
     if (tab === 'reports') void loadReports();
     if (tab === 'history') void loadHistory();
-  }, [tab, loadQueue, loadReports, loadHistory]);
+  }, [tab, loadQueue, loadModerated, loadReports, loadHistory]);
 
   function refreshAll() {
     loadStats();
     if (tab === 'queue') void loadQueue();
+    if (tab === 'moderated') void loadModerated();
     if (tab === 'reports') void loadReports();
   }
 
@@ -207,6 +230,7 @@ export default function ModeratorPage() {
             <div className="mt-8 flex flex-wrap gap-1.5">
               {([
                 { key: 'queue', label: 'Review queue', icon: Inbox },
+                { key: 'moderated', label: 'Moderated posts', icon: Gauge },
                 { key: 'reports', label: 'User reports', icon: FileWarning },
                 { key: 'history', label: 'My review history', icon: ListChecks },
               ] as const).map((item) => (
@@ -230,6 +254,19 @@ export default function ModeratorPage() {
                   value={queueRisk}
                   onChange={(event) => setQueueRisk(event.target.value)}
                   aria-label="Filter queue by risk level"
+                >
+                  <option value="">All risk levels</option>
+                  <option value="high">High risk</option>
+                  <option value="medium">Medium risk</option>
+                  <option value="low">Low risk</option>
+                </select>
+              )}
+              {tab === 'moderated' && (
+                <select
+                  className="input ml-auto w-auto py-1.5 text-sm"
+                  value={moderatedRisk}
+                  onChange={(event) => setModeratedRisk(event.target.value)}
+                  aria-label="Filter posts by risk level"
                 >
                   <option value="">All risk levels</option>
                   <option value="high">High risk</option>
@@ -261,6 +298,24 @@ export default function ModeratorPage() {
                   {queueError ? <ErrorMessage error={queueError} onRetry={loadQueue} /> : null}
                   {!queueLoading && !queueError && (
                     <ModerationTable items={queue} onDecided={refreshAll} />
+                  )}
+                </div>
+              )}
+
+              {/* MODERATED POSTS */}
+              {tab === 'moderated' && (
+                <div className="space-y-4">
+                  {moderatedLoading && (
+                    <LoadingSpinner label="Loading posts..." />
+                  )}
+                  {moderatedError ? (
+                    <ErrorMessage error={moderatedError} onRetry={loadModerated} />
+                  ) : null}
+                  {!moderatedLoading && !moderatedError && (
+                    <ModeratedPostsTable
+                      items={moderated}
+                      onChanged={refreshAll}
+                    />
                   )}
                 </div>
               )}
@@ -356,14 +411,23 @@ export default function ModeratorPage() {
                         </div>
                         <span
                           className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                            review.action === 'approved'
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-                              : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+                            review.action === 'risk_overridden'
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+                              : review.action === 'approved'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                                : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
                           }`}
                         >
-                          {review.action}
+                          {review.action.replace('_', ' ')}
                         </span>
                       </div>
+                      {review.action === 'risk_overridden' && (
+                        <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          <RiskBadge level={review.previous_risk_level || 'low'} size="sm" />
+                          <span>→</span>
+                          <RiskBadge level={review.new_risk_level || 'low'} size="sm" />
+                        </p>
+                      )}
                       {review.remarks && (
                         <p className="mt-2 rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-500 dark:bg-navy-900 dark:text-slate-400">
                           {review.remarks}

@@ -1,14 +1,21 @@
 """Root URL configuration for TruthGuard."""
+import os
+
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
+from django.views.static import serve as static_serve
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from apps.analytics.views import PublicStatsView
 
+from .views import health, spa_index
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # Health check used by hosting platforms
+    path('health', health, name='health'),
+    path('api/health/', health, name='api-health'),
     # API documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='api-docs'),
@@ -33,5 +40,22 @@ urlpatterns = [
     path('api/public/stats/', PublicStatsView.as_view(), name='public-stats'),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# User-uploaded images. Fine for a demo deployment; use object storage when
+# running at scale. Served in both development and production.
+urlpatterns += [
+    re_path(
+        r'^media/(?P<path>.*)$',
+        static_serve,
+        {'document_root': settings.MEDIA_ROOT},
+    ),
+]
+
+# Built React app (Docker/Render single-service deployment). API, admin,
+# static and media requests are matched above or by WhiteNoise.
+urlpatterns += [
+    re_path(
+        r'^(?P<path>(?!api/|admin/|static/|media/).*)$',
+        spa_index,
+        name='frontend',
+    ),
+]

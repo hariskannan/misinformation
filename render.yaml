@@ -1,0 +1,28 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# Deploy: push this repository to GitHub, then in Render choose
+# "New +" -> "Blueprint" and select the repository.
+#
+# This uses SQLite inside the container, so the demo data resets whenever the
+# service redeploys or restarts. seed_demo / seed_extra recreate everything
+# (including the trained models) on start-up. Switch to Render Postgres and set
+# the DB_* variables for persistent data.
+services:
+  - type: web
+    name: truthguard
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health/
+    autoDeploy: true
+    envVars:
+      - key: DJANGO_DEBUG
+        value: "0"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: USE_SQLITE
+        value: "1"
+      - key: DJANGO_BEHIND_PROXY
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "2"

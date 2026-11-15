@@ -5,6 +5,7 @@ import type {
   ModerationStats,
   Paginated,
   Prediction,
+  RiskLevel,
   UserReport,
 } from '../types';
 
@@ -26,13 +27,45 @@ export const moderationApi = {
     return data;
   },
 
-  async approve(id: number, remarks: string): Promise<{ detail: string }> {
-    const { data } = await api.post(`/api/moderation/${id}/approve/`, { remarks });
+  async approve(
+    id: number,
+    remarks: string,
+    newRiskLevel?: RiskLevel,
+  ): Promise<{ detail: string }> {
+    const { data } = await api.post(`/api/moderation/${id}/approve/`, {
+      remarks,
+      ...(newRiskLevel ? { new_risk_level: newRiskLevel } : {}),
+    });
     return data;
   },
 
   async reject(id: number, remarks: string): Promise<{ detail: string }> {
     const { data } = await api.post(`/api/moderation/${id}/reject/`, { remarks });
+    return data;
+  },
+
+  async setRisk(
+    id: number,
+    riskLevel: RiskLevel,
+    remarks: string,
+  ): Promise<{ detail: string; review: ModerationReviewItem; post: ModerationQueueItem }> {
+    const { data } = await api.post(`/api/moderation/${id}/set-risk/`, {
+      risk_level: riskLevel,
+      remarks,
+    });
+    return data;
+  },
+
+  async moderatedPosts(params?: {
+    page?: number;
+    status?: string;
+    risk?: string;
+    search?: string;
+  }): Promise<Paginated<ModerationQueueItem>> {
+    const { data } = await api.get<Paginated<ModerationQueueItem>>(
+      '/api/moderation/posts/',
+      { params },
+    );
     return data;
   },
 

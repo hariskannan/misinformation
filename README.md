@@ -16,6 +16,8 @@ TruthGuard is a full-stack social platform where every post is analysed by a mac
 - [Project structure](#project-structure)
 - [Quick start](#quick-start)
 - [Demo accounts](#demo-accounts)
+- [Sharing and public posts](#sharing-and-public-posts)
+- [Hosting a public demo](#hosting-a-public-demo)
 - [Dataset policy](#dataset-policy)
 - [API documentation](#api-documentation)
 - [Limitations](#limitations)
@@ -39,8 +41,16 @@ TruthGuard is a full-stack social platform where every post is analysed by a mac
 ### Moderation
 - Queue of high-risk / reported content, with full model evidence side by side.
 - Approve or reject posts with mandatory remarks.
+- **Human risk override** — approval can set a new risk level, and the *Moderated posts* tab can change the risk of any published, approved or rejected post after the fact. The author is notified, the change is written to the audit log, and the original `Prediction` row is never edited.
+- Filter the queue and moderated lists by risk level; the history shows each risk transition (e.g. high → medium).
 - Resolution of user reports and a complete moderation history.
 - Every action is written to an audit log and preserves the original model prediction.
+
+### Sharing
+- Share low/medium-risk public posts to X, Facebook, LinkedIn, WhatsApp or Telegram using official intent URLs, or copy a direct link.
+- High-risk and non-public posts cannot be shared; the control is disabled with an explanation.
+- Every published post has a public page at `/post/:id` so shared links work for signed-out visitors.
+- Shared pages always show the model, confidence, timestamp and limitations text.
 
 ### Administration & analytics
 - Live platform analytics: posts, users, risk distribution, activity charts, moderation throughput.
@@ -155,6 +165,14 @@ python manage.py seed_demo
 
 `seed_demo` creates the demo accounts, a clearly-labelled **synthetic** sample dataset, trains all four classifiers through the real training pipeline, activates the best model by F1, and publishes demo posts through the real prediction workflow.
 
+For a richer demo (six extra users, generated image posts, high-risk posts, an approved post whose risk was lowered and a rejected post), also run:
+
+```bash
+python manage.py seed_extra
+```
+
+Both seed commands are idempotent and safe to run again.
+
 Start the API:
 
 ```bash
@@ -175,7 +193,7 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. The frontend defaults to `http://localhost:8000` as the API base URL; to change it, create `frontend/.env`:
+Open <http://localhost:5173>. The frontend calls the API on the **same origin**; the Vite dev server proxies `/api` and `/media` to Django on port 8000. To target a separate backend instead, create `frontend/.env`:
 
 ```env
 VITE_API_URL=http://localhost:8000
@@ -240,13 +258,66 @@ All demo accounts use the password **`TruthGuard#2026`**. Login accepts either u
 | `carol` | carol@example.com | User | Demo author (flagged content) |
 | `dave` | dave@example.com | User | Demo author |
 
-> These credentials are for the local demo database only. Change or remove them before any public deployment.
+Optional additions from `seed_extra`:
 
-Optional additions (if present in the seed command output):
+| Username | Role | Demo content |
+|---|---|---|
+| `dummy` | User | High-risk post in the queue + a normal post |
+| `emma` | User | Image post + a high-risk post |
+| `frank` | User | Image post + a normal post |
+| `grace` | User | Image post |
+| `henry` | User | High-risk post |
+| `isla` | User | High-risk post and a user report |
 
-| Username | Role |
-|---|---|
-| `dummy`, `emma`, `frank`, `grace`, `henry`, `isla` | User |
+> These credentials are for the demo database only. Change or remove them before any public deployment.
+
+---
+
+## Sharing and public posts
+
+- Only **low** and **medium** risk posts that are already public (`published` or `approved`) show an enabled Share button.
+- High-risk posts show a locked button with an explanation. A moderator can lower the risk from *Moderation → Moderated posts*; the model prediction stays unchanged.
+- The share menu opens the platform's official share intent (X, Facebook, LinkedIn, WhatsApp, Telegram) or copies `.../post/:id` to the clipboard. No developer API keys are required.
+- `/post/:id` is public, so anyone with the link can read the post. It shows the author, risk badge, model name/version, confidence, timestamp and the limitations notice.
+
+---
+
+## Hosting a public demo
+
+### Option A — temporary public URL (no account, ~1 minute)
+
+This exposes your running local servers through a Cloudflare Quick Tunnel. The URL stays alive only while the tunnel process and this computer stay running.
+
+1. Start the project normally (`start-project.bat`, or the backend and frontend windows).
+2. Double-click **`start-public-tunnel.bat`** (or run `start-public-tunnel.bat` in Command Prompt).
+3. Wait for a line like `https://something-random.trycloudflare.com` and share that address.
+
+The tunnel points at Vite (`:5173`), which proxies `/api` and `/media` to Django, so the whole app works on one HTTPS origin. Alternative manual command:
+
+```bat
+cloudflared tunnel --url http://localhost:5173
+```
+
+### Option B — permanent deployment (Render, free tier)
+
+The repository contains a production **Dockerfile** and a **`render.yaml`** blueprint that build the React app and serve it from Django (WhiteNoise + gunicorn) on one HTTPS domain.
+
+1. Push this repository to GitHub (already done for this project).
+2. Create a free account at <https://render.com> and connect GitHub.
+3. Choose **New + → Blueprint**, select the repository, and apply the detected `render.yaml`.
+4. Wait for the first build. It runs migrations and both seed commands, trains the four models, then starts gunicorn. The service URL (`https://<name>.onrender.com`) is your shareable link.
+5. Open **Environment** if you need to change `TG_HIGH_RISK_THRESHOLD`, `TG_MEDIUM_RISK_ACTION`, etc.
+
+The free blueprint uses SQLite inside the container, which is **ephemeral**: data resets whenever the service redeploys or restarts, and the demo content/models are recreated automatically. For persistent data, create a Render PostgreSQL instance and set `USE_SQLITE=0`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`.
+
+Any Docker host (Fly.io, Railway, a VPS) works the same way:
+
+```bash
+docker build -t truthguard .
+docker run -p 8000:8000 -e DJANGO_DEBUG=0 -e DJANGO_SECRET_KEY=change-me truthguard
+```
+
+Then open <http://localhost:8000> — Django serves the SPA, API, media and admin from one port.
 
 ---
 
@@ -294,11 +365,13 @@ Main endpoint groups:
 
 ## Production notes
 
-- Set `DJANGO_DEBUG=0`, a strong `DJANGO_SECRET_KEY`, and a restricted `DJANGO_ALLOWED_HOSTS`.
-- Use PostgreSQL (`USE_SQLITE=0`) and proper database credentials.
-- Serve media and static files through a web server or object storage, not Django.
-- Configure HTTPS, secure cookies, rate limiting and regular backups.
-- Replace the demo accounts and rotate all credentials.
+- Set `DJANGO_DEBUG=0`, a strong `DJANGO_SECRET_KEY`, and a restricted `DJANGO_ALLOWED_HOSTS`. Set `DJANGO_EXTRA_ALLOWED_HOSTS` for additional domains.
+- `DJANGO_BEHIND_PROXY=1` (default) trusts `X-Forwarded-Proto` so HTTPS is detected correctly behind Render/Cloudflare.
+- The Docker image runs `collectstatic` and WhiteNoise serves Django admin/API-doc assets; the React build is served from `frontend_dist` by `config/views.py`.
+- User-uploaded media and model artifacts live on the container filesystem in the demo image. Use object storage or a persistent volume for real deployments.
+- Use PostgreSQL (`USE_SQLITE=0`) for persistent data and proper backups.
+- Replace the demo accounts and rotate all credentials. The demo seed commands are meant for evaluation, not production.
+- Consider restricting social sharing, adding rate limits and reviewing the disclaimer before allowing public sign-ups.
 
 ---
 

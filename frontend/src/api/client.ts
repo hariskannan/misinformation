@@ -1,7 +1,10 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
+// Base URL of the API. Empty means "same origin": the Vite dev server proxies
+// /api and /media to Django, and a production build can be served by Django or
+// a reverse proxy on the same domain.
 export const API_BASE_URL: string =
-  (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:8000';
+  (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

@@ -20,7 +20,7 @@ class ModerationReviewSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'post_id', 'post_title', 'post_content', 'post_status',
             'post_risk_level', 'post_author', 'moderator_username', 'action',
-            'remarks', 'created_at',
+            'remarks', 'previous_risk_level', 'new_risk_level', 'created_at',
         ]
 
     def get_post_content(self, obj):
@@ -35,13 +35,15 @@ class ModerationQueueItemSerializer(serializers.ModelSerializer):
     prediction = serializers.SerializerMethodField()
     reports_count = serializers.SerializerMethodField()
     latest_report_reasons = serializers.SerializerMethodField()
+    image = serializers.ImageField(read_only=True)
+    latest_review = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
         fields = [
-            'id', 'title', 'content', 'category', 'status', 'risk_level',
-            'created_at', 'author_username', 'author_full_name',
-            'prediction', 'reports_count', 'latest_report_reasons',
+            'id', 'title', 'content', 'category', 'image', 'status', 'risk_level',
+            'created_at', 'updated_at', 'author_username', 'author_full_name',
+            'prediction', 'reports_count', 'latest_report_reasons', 'latest_review',
         ]
 
     def get_author_full_name(self, obj):
@@ -76,3 +78,18 @@ class ModerationQueueItemSerializer(serializers.ModelSerializer):
         return list(
             obj.reports.order_by('-created_at').values_list('reason', flat=True)[:5]
         )
+
+    def get_latest_review(self, obj):
+        review = obj.reviews.first()
+        if review is None:
+            return None
+        remarks = review.remarks
+        return {
+            'id': review.id,
+            'action': review.action,
+            'remarks': remarks[:300],
+            'moderator_username': review.moderator.username,
+            'previous_risk_level': review.previous_risk_level,
+            'new_risk_level': review.new_risk_level,
+            'created_at': review.created_at,
+        }

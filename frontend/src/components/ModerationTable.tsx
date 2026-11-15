@@ -4,7 +4,7 @@ import { moderationApi } from '../api/moderation';
 import { extractErrorMessage } from '../api/client';
 import ErrorMessage from './ErrorMessage';
 import RiskBadge from './RiskBadge';
-import type { ModerationQueueItem } from '../types';
+import type { ModerationQueueItem, RiskLevel } from '../types';
 import { CATEGORY_LABELS, formatDateTime, formatPercent } from '../utils/format';
 
 /**
@@ -24,6 +24,7 @@ export default function ModerationTable({
     action: 'approve' | 'reject';
   } | null>(null);
   const [remarks, setRemarks] = useState('');
+  const [newRisk, setNewRisk] = useState<'' | RiskLevel>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ModerationQueueItem | null>(null);
@@ -31,6 +32,7 @@ export default function ModerationTable({
   function openDecision(item: ModerationQueueItem, action: 'approve' | 'reject') {
     setError(null);
     setRemarks('');
+    setNewRisk('');
     setDeciding({ item, action });
   }
 
@@ -45,7 +47,11 @@ export default function ModerationTable({
     setError(null);
     try {
       if (deciding.action === 'approve') {
-        await moderationApi.approve(deciding.item.id, trimmed);
+        await moderationApi.approve(
+          deciding.item.id,
+          trimmed,
+          newRisk || undefined,
+        );
       } else {
         await moderationApi.reject(deciding.item.id, trimmed);
       }
@@ -183,6 +189,33 @@ export default function ModerationTable({
                 ? 'Approving makes this post publicly visible again.'
                 : 'Rejecting keeps this post out of the public feed. The author is notified with your remarks.'}
             </p>
+            {deciding.action === 'approve' && (
+              <div className="mt-4">
+                <label htmlFor="approve-risk" className="label">
+                  Risk level after approval
+                </label>
+                <select
+                  id="approve-risk"
+                  className="input"
+                  value={newRisk}
+                  onChange={(event) => setNewRisk(event.target.value as '' | RiskLevel)}
+                >
+                  <option value="">
+                    Keep the model's risk level ({deciding.item.risk_level})
+                  </option>
+                  <option value="low">Low risk - publish and allow sharing</option>
+                  <option value="medium">
+                    Medium risk - publish with warning and allow sharing
+                  </option>
+                  <option value="high">High risk - publish but block social sharing</option>
+                </select>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+                  Lowering the risk overrides the model's assessment. The original
+                  prediction and confidence stay on record, and the change is written
+                  to the audit log.
+                </p>
+              </div>
+            )}
             <label htmlFor="remarks" className="label mt-4">
               Review remarks (required, visible to the author and other moderators)
             </label>
